@@ -7,13 +7,14 @@ Steps:
 0. Generate polygenic risk scores
 1. Divide the UKB cohort into training (not included in MRI) and testing (MRI data available) sets
 2. Determine the optimal MS PRS in the training cohort
+3. Check that the optimal PRS performs ok in the MRI cohort
+4. Correlate PRS with MRI imaging-derived phenotypes in the MRI cohort
 
 
-
-# 0. Generate polygenic risk scores
+## 0. Generate polygenic risk scores
 We generated polygenic risk scores in UKB using the IMSGC meta-analysis discovery stage summary statistics. We used the clumping-and-thresholding method to create a variety of scores. For a full description of our methods please see the [code](https://github.com/benjacobs123456/MS_UKB_PRS) and read the [manuscript](https://nn.neurology.org/content/8/4/e1007).
 
-# 1. Divide the UKB cohort into two sets - the non-imaging cohort (to select the best PRS, i.e. training set), and the imaging cohort (validation or testing set)
+## 1. Divide the UKB cohort into two sets - the non-imaging cohort (to select the best PRS, i.e. training set), and the imaging cohort (validation or testing set)
 ````R
 #############################################
 #               Load packages
@@ -109,7 +110,7 @@ Controls     |     Cases
 ------------ | --------------
 36050        |  164
 
-# 2. Select the best PRS in the UKB non-imaging cohort
+## 2. Select the best PRS in the UKB non-imaging cohort
 Now we will test the PRS in the non-MRI cohort and select the score with the best explanatory power for MS susceptibility in this cohort.
 ````R
 # Define scoring function
@@ -220,7 +221,9 @@ png("nagel_plot.png",height=8,width=12,res=300,units="in")
 nagel_plot
 dev.off()
 ````
-#### Nagel plot
+Here's a plot of the prediction pseudo-R2 values for each PRS in the training set (roughly equivalent to variance explained)
+![Nagel plot](https://github.com/benjacobs123456/PRS_UKB_MRI/blob/main/nagel_plot.png)
+
 The best PRS explain ~ 3.3% (with MHC) and ~1.2% (without MHC) of MS liability in the training (non-MRI) cohort:
 
 ````R
@@ -292,7 +295,9 @@ params %>% arrange(desc(Nagelkerke_Pseudo_R2))
 64 0.00000005 0.2           0.00248654 MHC excluded
 ````
 
-# 3. Validate the PRS in the MRI cohort
+## 3. Validate the PRS in the MRI cohort
+This step checks that these optimal PRS actually have some predictive/discriminative power to distinguish MS from controls in the MRI dataset. These results are a rough check as there are only 164 MS cases in the MRI cohort.
+
 
 ````R
 # Even though there are only 164 MS cases in the MRI cohort, let's just check the PRS is working reasonably well.
@@ -353,6 +358,7 @@ Parameter  |  PRS (no HLA)   | PRS (with HLA)
 Nagelkerke's Pseudo-R2 | 0.0134 |  0.0394
 Likelihood ratio P value | 2.54e-07 | 9.98e-19
 
+Now we'll check that with increasing PRS deciles, MS risk increases as we would expect.
 ````R
 library(Hmisc)
 
@@ -419,8 +425,9 @@ grid.arrange(no_hla_prs_decile_plot,prs_decile_plot,nrow=1)
 dev.off()
 ````
 Here is the decile plot:
+![decile plot](https://github.com/benjacobs123456/PRS_UKB_MRI/blob/main/decile_plot.png)
 
-
+Now let's see the distributions of PRS:
 ````R
 hist_nohla = ggplot(ukb_pheno_mri,aes(NOHLA_PRS,fill=factor(MS_status)))+
 geom_density(alpha=0.5)+
@@ -444,7 +451,9 @@ grid.arrange(hist_nohla,hist_hla,nrow=1)
 dev.off()
 ````
 Here is the PRS density plot:
+![density_plot](https://github.com/benjacobs123456/PRS_UKB_MRI/blob/main/prs_hist.png)
 
+Now the calibration plots:
 ````R
 # roc analysis
 library(ROCR)
@@ -504,7 +513,9 @@ calib_plot
 dev.off()
 ````
 Here is the calibration plot:
+![calib](https://github.com/benjacobs123456/PRS_UKB_MRI/blob/main/calibration_plot.png)
 
+And finally the ROC curves:
 ````R
 # auc
 
@@ -538,11 +549,12 @@ aucplot
 dev.off()
 ````
 Here are the ROC curves:
+![roc](https://github.com/benjacobs123456/PRS_UKB_MRI/blob/main/discrimination_plot.png)
 
 
+## 4. Correlation between PRS and MRI metrics
 
-# 4. Correlation between PRS and MRI metrics
-Now let's look at the MRI data itself.
+Now let's look at the MRI data itself. First we need to make sure that we exclude people with Alzheimer's, PD, and cerebral small vessel disease as we are interested in as healthy a cohort as possible.  
 
 ````R
 # First exclude strokes and other neurodegenerative diseases
@@ -568,11 +580,13 @@ any_neuro_disease = source_of_report_data %>% filter(pd_status==1 | ad_status ==
 ukb_pheno_mri = ukb_pheno_mri %>% filter(!EID %in% any_neuro_disease)
 table(ukb_pheno_mri$MS_status)
 ````
-The MRI dataset after excluding people with AD, PD, and strokes:
+The MRI dataset after excluding people with AD, PD, and cerebral SVD:
 Controls     |     Cases
 ------------ | --------------
 35991        |  163
 
+
+Now we'll do some basic sense checks.
 ````R
 # combine MRI and rest of phenotype data
 mri = ukb_pheno_mri %>% left_join(mri_data,by="EID")
@@ -589,8 +603,8 @@ age_vs_brainvol
 dev.off()
 
 ````
-Brain volume is lower in older people:
-- Brain age plots
+1. Brain volume is lower in older people:
+![brainvol](https://github.com/benjacobs123456/PRS_UKB_MRI/blob/main/age_brainvol.png)
 
 ````R
 # Do pwMS have higher WM lesion volume
@@ -604,8 +618,9 @@ scale_fill_brewer(palette="Set2",labels=c("Controls","MS"))+
 theme(axis.text.x=element_blank())
 dev.off()
 ````
-People with MS have higher T2 hyperintensity volume
-- MS plot
+2. People with MS have higher T2 hyperintensity volume (presumably this is picking up old MS lesions).
+Interestingly there seem to be some controls (a small number) with very high lesion load, but the average T2 lesion load is clearly higher in MS, as we would expect.
+![ms_lesions](https://github.com/benjacobs123456/PRS_UKB_MRI/blob/main/wm_lesion_plot_ms_v_control.png)
 
 
 ````R
@@ -636,60 +651,102 @@ labs(x="Effect of MS status on normalised FA variable")
 dev.off()
 
 ````
-MS is strongly associated with widespread FA changes, consistent with (previous findings in normal-appearing cortex vs non-neurologic controls)[https://academic.oup.com/brain/article/142/7/1921/5511700]
-- MS lesion plot
+3. MS is strongly associated with widespread FA changes, consistent with [previous findings in normal-appearing cortex vs non-neurologic controls](https://academic.oup.com/brain/article/142/7/1921/5511700)
+![ms_fa_lesion](https://github.com/benjacobs123456/PRS_UKB_MRI/blob/main/ms_vs_control_fa.png)
 
+So the data look good. Now we can try to replicate the main findings we are interested in. First we'll look at white matter hyperintensities
 
-# Let's normalise WM lesion volume before we make any regression models
-mri$norm_wm_lesions = rankNorm(mri$wm_lesion_vol)
+````R
+# WM hyperintensities
+# first let's remove people with MS
+mri_noms = mri %>% filter(MS_status==0)
 
-# does MS status predict WM lesion volume?
-model = glm(data=mri,norm_wm_lesions~
-  `Age at recruitment.0.0`+Sex.0.0+`Genetic principal components.0.1`+`Genetic principal components.0.2`+`Genetic principal components.0.3`+`Genetic principal components.0.4`+csf_vol_normalised_headvol+grey_and_white_vol_normalised_headvol+MS_status)
-anova(model,test="Chisq")
+# normalise WM lesions
+mri_noms = mri_noms %>% filter(!is.na(`Total volume of white matter hyperintensities (from T1 and T2_FLAIR images).2.0`))
+mri_noms$norm_wm_lesions = rankNorm(mri_noms$`Total volume of white matter hyperintensities (from T1 and T2_FLAIR images).2.0`)
 
-# The answer is yes:
-# Likelihood ration pval 2.2e-16
-summary(model)
+hla_prs = ggplot(mri_noms,aes(HLA_PRS,norm_wm_lesions))+
+geom_point()+labs(x="HLA PRS",y="Normalised WM lesion volume")+theme_bw()
 
-or = exp(summary(model)$coefficients[10,1])
-lowerci = exp(summary(model)$coefficients[10,1]-1.96*summary(model)$coefficients[10,2])
-upperci = exp(summary(model)$coefficients[10,1]+1.96*summary(model)$coefficients[10,2])
-paste(round(or,3),round(lowerci,3),round(upperci,3))
+nohla_prs = ggplot(mri_noms,aes(NOHLA_PRS,norm_wm_lesions))+
+geom_point()+labs(x="Non-HLA PRS",y="Normalised WM lesion volume")+theme_bw()
 
-# OR 3.288, 95% CI 2.85 - 3.794
+png("wmlesions_prs_plot.png",res=300,units="in",height=8,width=8)
+grid.arrange(hla_prs,nohla_prs,nrow=1)
+dev.off()
+````
 
+There is no obvious correlation between PRS and normalised WM lesion volume.
+![WM lesion plot](https://github.com/benjacobs123456/PRS_UKB_MRI/blob/main/wmlesions_prs_plot.png)
+
+There is no statistical evidence of such an association either:
+````R
 # Does MS PRS predict WM lesion volume in healthy people
-model = glm(data=mri,norm_wm_lesions~`Age at recruitment.0.0`+Sex.0.0+`Genetic principal components.0.1`+`Genetic principal components.0.2`+`Genetic principal components.0.3`+`Genetic principal components.0.4`+csf_vol_normalised_headvol+grey_and_white_vol_normalised_headvol+HLA_PRS)
-summary(model)
+hla_model = glm(data=mri_noms,norm_wm_lesions~`Age at recruitment.0.0`+Sex.0.0+`Genetic principal components.0.1`+`Genetic principal components.0.2`+`Genetic principal components.0.3`+`Genetic principal components.0.4`+`Volume of brain, grey+white matter (normalised for head size).2.0`+`Volume of ventricular cerebrospinal fluid (normalised for head size).2.0` +HLA_PRS)
+summary(hla_model)$coefficients[10,]
+summary(hla_model)$coefficients[10,]
+    Estimate   Std. Error      t value     Pr(>|t|)
+-0.005647618  0.004715386 -1.197700098  0.231042586
 
-mhc = ggplot(ms_mri,aes(HLA_PRS,norm_wm_lesions))+geom_point()+theme_classic()+
-labs(x="MHC PRS",y="Normalised WM T2/FLAIR lesion load")
-nomhc = ggplot(ms_mri,aes(NOHLA_PRS,norm_wm_lesions))+geom_point()+theme_classic()+
-labs(x="Non-MHC PRS",y="Normalised WM T2/FLAIR lesion load")
+nohla_model = glm(data=mri_noms,norm_wm_lesions~`Age at recruitment.0.0`+Sex.0.0+`Genetic principal components.0.1`+`Genetic principal components.0.2`+`Genetic principal components.0.3`+`Genetic principal components.0.4`+`Volume of brain, grey+white matter (normalised for head size).2.0`+`Volume of ventricular cerebrospinal fluid (normalised for head size).2.0` +NOHLA_PRS)
+summary(nohla_model)$coefficients[10,]
 
-png("mri_prs_plot.png",res=300,units="in",height=8,width=8)
-grid.arrange(mhc,nomhc,nrow=1)
+   Estimate  Std. Error     t value    Pr(>|t|)
+0.004583730 0.004707508 0.973706143 0.330209763
+````
+
+So there is no association between either PRS and WM hyperintensities.
+
+What about regional mean Fractional Anisotropy?
+````R
+
+fa_vars = mri_noms %>% select(EID,`Age at recruitment.0.0`,Sex.0.0,MS_status,contains("Mean FA"),HLA_PRS,NOHLA_PRS,`Genetic principal components.0.1`,`Genetic principal components.0.2`,`Genetic principal components.0.3`,`Genetic principal components.0.4`) %>%
+ select(EID,`Age at recruitment.0.0`,Sex.0.0,MS_status,HLA_PRS,NOHLA_PRS,`Genetic principal components.0.1`,`Genetic principal components.0.2`,`Genetic principal components.0.3`,`Genetic principal components.0.4`,contains(".2.0")) %>%
+ select(-contains("Weighted"))
+
+# HLA PRS
+overall_coefs = data.frame()
+make_model = function(x){
+  fa_vars_no_missing = fa_vars %>% filter(!is.na(fa_vars[[x]]))
+  model = glm(data=fa_vars_no_missing, rankNorm(fa_vars_no_missing[[x]]) ~ `Age at recruitment.0.0`+ `Sex.0.0`+ `Genetic principal components.0.1`+`Genetic principal components.0.2`+`Genetic principal components.0.3`+`Genetic principal components.0.4`+ HLA_PRS)
+  coefs = summary(model)$coefficients[8,]
+  overall_coefs <<- bind_rows(overall_coefs,coefs)
+}
+sapply(colnames(fa_vars)[-c(1:10)],make_model)
+
+overall_coefs = as.tbl(overall_coefs)
+overall_coefs$variable = colnames(fa_vars)[-c(1:10)]
+
+hla_fa_plot = ggplot(overall_coefs,aes(Estimate,variable))+
+geom_point(aes(size=-log10(`Pr(>|t|)`)))+
+geom_errorbarh(aes(y=variable,xmin=Estimate-1.96*`Std. Error`,xmax=Estimate+1.96*`Std. Error`),height=0.1)+
+geom_vline(xintercept=0,alpha=0.5)+
+theme_bw()+
+labs(x="Effect of HLA PRS on normalised FA variable")
+
+# NOHLA PRS
+overall_coefs = data.frame()
+make_model = function(x){
+  fa_vars_no_missing = fa_vars %>% filter(!is.na(fa_vars[[x]]))
+  model = glm(data=fa_vars_no_missing, rankNorm(fa_vars_no_missing[[x]]) ~ `Age at recruitment.0.0`+ `Sex.0.0`+ `Genetic principal components.0.1`+`Genetic principal components.0.2`+`Genetic principal components.0.3`+`Genetic principal components.0.4`+ NOHLA_PRS)
+  coefs = summary(model)$coefficients[8,]
+  overall_coefs <<- bind_rows(overall_coefs,coefs)
+}
+sapply(colnames(fa_vars)[-c(1:10)],make_model)
+
+overall_coefs = as.tbl(overall_coefs)
+overall_coefs$variable = colnames(fa_vars)[-c(1:10)]
+
+nonhla_fa_plot = ggplot(overall_coefs,aes(Estimate,variable))+
+geom_point(aes(size=-log10(`Pr(>|t|)`)))+
+geom_errorbarh(aes(y=variable,xmin=Estimate-1.96*`Std. Error`,xmax=Estimate+1.96*`Std. Error`),height=0.1)+
+geom_vline(xintercept=0,alpha=0.5)+
+theme_bw()+
+labs(x="Effect of Non-HLA PRS on normalised FA variable")
+
+png("fa_prs_plot.png",res=300,units="in",height=8,width=16)
+grid.arrange(hla_fa_plot,nonhla_fa_plot,nrow=1)
 dev.off()
-
-# repeat with controls
-mri_data = read_table2("mri_data.tsv")
-overall_mri = selected_vars %>% filter(EID %in% mri_data$EID)
-overall_mri = overall_mri %>% left_join(mri_data,by="EID") %>% filter(!is.na(wm_lesion_vol))
-overall_mri$norm_wm_lesions = rankNorm(overall_mri$wm_lesion_vol)
-
-
-mhc = ggplot(overall_mri,aes(HLA_PRS,norm_wm_lesions,col=factor(MS_status)))+geom_point(alpha=0.5)+theme_classic()+
-labs(x="MHC PRS",y="Normalised WM T2/FLAIR lesion load",col="MS status")+scale_color_discrete(labels=c("Controls","MS cases"))
-nomhc = ggplot(overall_mri,aes(NOHLA_PRS,norm_wm_lesions,col=factor(MS_status)))+geom_point(alpha=0.5)+theme_classic()+
-labs(x="Non-MHC PRS",y="Normalised WM T2/FLAIR lesion load",col="MS status")+scale_color_discrete(labels=c("Controls","MS cases"))
-
-png("healthy_indivs_mri_prs_plot.png",res=300,units="in",height=8,width=8)
-grid.arrange(mhc,nomhc,nrow=1)
-dev.off()
-
-model = glm(data=overall_mri,norm_wm_lesions~`Age at recruitment.0.0`+Sex.0.0+`Genetic principal components.0.1`+`Genetic principal components.0.2`+`Genetic principal components.0.3`+`Genetic principal components.0.4`+csf_vol_normalised_headvol+grey_and_white_vol_normalised_headvol+HLA_PRS)
-summary(model)
-
-model = glm(data=overall_mri,norm_wm_lesions~`Age at recruitment.0.0`+ Sex.0.0+`Genetic principal components.0.1`+`Genetic principal components.0.2`+`Genetic principal components.0.3`+`Genetic principal components.0.4`+csf_vol_normalised_headvol+grey_and_white_vol_normalised_headvol+NOHLA_PRS)
-summary(model)
+````
+The answer is no. None of these associations pass the multiple testing threshold (Alpha = 0.05, Bonferroni correction).
+![fa_plot](https://github.com/benjacobs123456/PRS_UKB_MRI/blob/main/fa_prs_plot.png)
