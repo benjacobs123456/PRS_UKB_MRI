@@ -3,6 +3,7 @@
 A quick replication effort to see if the results reported [here](https://journals.sagepub.com/doi/full/10.1177/13524585211034826) can be reproduced in the UKB imaging cohort.
 
 Steps:
+
 0. Generate polygenic risk scores
 1. Divide the UKB cohort into training (not included in MRI) and testing (MRI data available) sets
 2. Determine the optimal MS PRS in the training cohort
@@ -33,10 +34,6 @@ source_of_report_data = read_tsv("../ukb_pheno_17_03_21/ukb_pheno_nocognitive_17
   `Source of report of G35 (multiple sclerosis).0.0` = col_character(),
   EID = col_double()
   ))
-
-  Source of report of G20 (parkinson's disease)
-  	Source of report of G30 (alzheimer's disease)
-    Source of report of G45 (transient cerebral ischaemic attacks and related syndromes)
 
 # define MS status
 source_of_report_data = source_of_report_data %>% mutate(MS_status = ifelse(!is.na(`Source of report of G35 (multiple sclerosis).0.0`),1,0))
@@ -75,9 +72,9 @@ Controls     |     Cases
 ````R
 # Filter highly related individuals
 # filter relatedness
-# nb this is taking care to exclude the non-ms control from each pair to boost case number
+# nb this is taking care to exclude the non-ms control from each pair to boost case numbers
 kin = read_table2("/data/Wolfson-UKBB-Dobson/helper_progs_and_key/ukb43101_rel_s488282.dat")
-highly_related = kin %>% filter(Kinship>0.0442) %>% filter(ID1 %in% ukb_pheno$EID) %>% filter(ID2 %in% ukb_pheno$EID)
+highly_related = kin %>% filter(Kinship>0.0884) %>% filter(ID1 %in% ukb_pheno$EID) %>% filter(ID2 %in% ukb_pheno$EID)
 highly_related = highly_related %>% left_join((ukb_pheno %>% filter(EID %in% highly_related$ID1) %>% select(EID,MS_status)  %>% rename(ID1 = EID,MS_status_ID1 = MS_status)),by="ID1") %>%
 left_join((ukb_pheno %>% filter(EID %in% highly_related$ID2) %>% select(EID,MS_status) %>% rename(ID2 = EID, MS_status_ID2 = MS_status)),by="ID2")
 
@@ -87,10 +84,12 @@ highly_related %>% filter(MS_status_ID1==0 & MS_status_ID2==0) %>% select(ID1) %
 ukb_pheno = ukb_pheno %>% filter(!EID %in% exclusion$EID)
 table(ukb_pheno$MS_status)
 ````   
+
 After exclusion of non-European participants:
 Controls     |     Cases
 ------------ | --------------
-336766       |   2102
+376587       |   2102
+
 ````R
 # define non-MRI dataset
 ukb_pheno_nomri = ukb_pheno %>% filter(!EID %in% mri_data$EID)
@@ -99,7 +98,7 @@ table(ukb_pheno_nomri$MS_status)
 In the non-MRI dataset:
 Controls     |     Cases
 ------------ | --------------
-308905       |  1962
+340537       |  1938
 ````R
 ukb_pheno_mri = ukb_pheno %>% filter(EID %in% mri_data$EID)
 table(ukb_pheno_mri$MS_status)
@@ -108,7 +107,7 @@ And in the non-MRI dataset:
 In the non-MRI dataset:
 Controls     |     Cases
 ------------ | --------------
-27861        |  140
+36050        |  164
 
 # 2. Select the best PRS in the UKB non-imaging cohort
 Now we will test the PRS in the non-MRI cohort and select the score with the best explanatory power for MS susceptibility in this cohort.
@@ -221,81 +220,82 @@ png("nagel_plot.png",height=8,width=12,res=300,units="in")
 nagel_plot
 dev.off()
 ````
-The best PRS explain ~ 3.4% (with MHC) and ~1.5% (without MHC) of MS liability in the training (non-MRI) cohort.
+#### Nagel plot
+The best PRS explain ~ 3.3% (with MHC) and ~1.2% (without MHC) of MS liability in the training (non-MRI) cohort:
 
 ````R
 params %>% arrange(desc(Nagelkerke_Pseudo_R2))
-         Pval  R2 Nagelkerke_Pseudo_R2          MHC
-1         0.4 0.8           0.03444300 MHC included
-2         0.6 0.8           0.03409030 MHC included
-3         0.8 0.8           0.03384930 MHC included
-4           1 0.8           0.03383730 MHC included
-5         0.2 0.8           0.03358050 MHC included
-6         0.1 0.8           0.03274790 MHC included
-7        0.05 0.8           0.03205990 MHC included
-8        0.05 0.6           0.03117320 MHC included
-9         0.4 0.6           0.03072340 MHC included
-10        0.1 0.6           0.03053970 MHC included
-11        0.2 0.6           0.03027150 MHC included
-12        0.6 0.6           0.02984240 MHC included
-13        0.8 0.6           0.02938830 MHC included
-14          1 0.6           0.02936110 MHC included
-15       0.05 0.4           0.02727050 MHC included
-16        0.1 0.4           0.02474370 MHC included
-17        0.4 0.4           0.02372710 MHC included
-18        0.2 0.4           0.02349400 MHC included
-19        0.6 0.4           0.02277380 MHC included
-20        0.8 0.4           0.02222430 MHC included
-21          1 0.4           0.02221840 MHC included
-22 0.00000005 0.8           0.02217370 MHC included
-23 0.00000005 0.6           0.02183440 MHC included
-24 0.00000005 0.4           0.02118930 MHC included
-25 0.00000005 0.2           0.01906000 MHC included
-26       0.05 0.2           0.01664680 MHC included
-27        0.1 0.2           0.01385020 MHC included
-28        0.4 0.2           0.01337980 MHC included
-29        0.2 0.2           0.01309840 MHC included
-30        0.6 0.2           0.01293740 MHC included
-31        0.8 0.2           0.01265030 MHC included
-32          1 0.2           0.01263120 MHC included
-33       0.05 0.8           0.01254230 MHC excluded
-34        0.4 0.8           0.01243330 MHC excluded
-35        0.6 0.8           0.01194590 MHC excluded
-36        0.2 0.8           0.01190250 MHC excluded
-37        0.1 0.8           0.01189930 MHC excluded
-38        0.8 0.8           0.01168780 MHC excluded
-39          1 0.8           0.01168190 MHC excluded
-40        0.4 0.6           0.01037480 MHC excluded
-41        0.6 0.6           0.00991984 MHC excluded
-42       0.05 0.6           0.00973293 MHC excluded
-43        0.8 0.6           0.00966366 MHC excluded
-44          1 0.6           0.00965404 MHC excluded
-45        0.2 0.6           0.00929053 MHC excluded
-46        0.1 0.6           0.00907070 MHC excluded
-47        0.4 0.4           0.00811307 MHC excluded
-48        0.6 0.4           0.00779066 MHC excluded
-49          1 0.4           0.00752575 MHC excluded
-50        0.8 0.4           0.00752307 MHC excluded
-51       0.05 0.4           0.00734313 MHC excluded
-52        0.2 0.4           0.00697575 MHC excluded
-53        0.1 0.4           0.00667549 MHC excluded
-54 0.00000005 0.8           0.00564719 MHC excluded
-55        0.4 0.2           0.00554609 MHC excluded
-56        0.6 0.2           0.00544342 MHC excluded
-57        0.8 0.2           0.00529467 MHC excluded
-58          1 0.2           0.00528087 MHC excluded
-59       0.05 0.2           0.00482235 MHC excluded
-60        0.2 0.2           0.00469673 MHC excluded
-61 0.00000005 0.6           0.00455533 MHC excluded
-62        0.1 0.2           0.00425953 MHC excluded
-63 0.00000005 0.4           0.00351158 MHC excluded
-64 0.00000005 0.2           0.00248418 MHC excluded
+        Pval  R2 Nagelkerke_Pseudo_R2          MHC
+1         0.4 0.8           0.03366990 MHC included
+2         0.6 0.8           0.03334440 MHC included
+3         0.8 0.8           0.03311840 MHC included
+4           1 0.8           0.03309640 MHC included
+5         0.2 0.8           0.03281090 MHC included
+6         0.1 0.8           0.03205260 MHC included
+7        0.05 0.8           0.03139980 MHC included
+8        0.05 0.6           0.03059800 MHC included
+9         0.4 0.6           0.03008720 MHC included
+10        0.1 0.6           0.02993970 MHC included
+11        0.2 0.6           0.02959850 MHC included
+12        0.6 0.6           0.02925860 MHC included
+13        0.8 0.6           0.02882640 MHC included
+14          1 0.6           0.02878650 MHC included
+15       0.05 0.4           0.02680780 MHC included
+16        0.1 0.4           0.02425730 MHC included
+17        0.4 0.4           0.02326720 MHC included
+18        0.2 0.4           0.02295200 MHC included
+19        0.6 0.4           0.02235550 MHC included
+20        0.8 0.4           0.02183290 MHC included
+21          1 0.4           0.02181220 MHC included
+22 0.00000005 0.8           0.02165780 MHC included
+23 0.00000005 0.6           0.02134920 MHC included
+24 0.00000005 0.4           0.02068890 MHC included
+25 0.00000005 0.2           0.01867150 MHC included
+26       0.05 0.2           0.01638110 MHC included
+27        0.1 0.2           0.01358170 MHC included
+28        0.4 0.2           0.01312180 MHC included
+29        0.2 0.2           0.01280330 MHC included
+30        0.6 0.2           0.01268200 MHC included
+31       0.05 0.8           0.01245110 MHC excluded
+32        0.8 0.2           0.01240420 MHC included
+33          1 0.2           0.01237700 MHC included
+34        0.4 0.8           0.01215340 MHC excluded
+35        0.1 0.8           0.01169500 MHC excluded
+36        0.6 0.8           0.01168870 MHC excluded
+37        0.2 0.8           0.01161880 MHC excluded
+38        0.8 0.8           0.01144460 MHC excluded
+39          1 0.8           0.01142960 MHC excluded
+40        0.4 0.6           0.01015730 MHC excluded
+41        0.6 0.6           0.00973436 MHC excluded
+42       0.05 0.6           0.00964942 MHC excluded
+43        0.8 0.6           0.00949456 MHC excluded
+44          1 0.6           0.00947578 MHC excluded
+45        0.2 0.6           0.00905918 MHC excluded
+46        0.1 0.6           0.00890722 MHC excluded
+47        0.4 0.4           0.00797541 MHC excluded
+48        0.6 0.4           0.00767666 MHC excluded
+49        0.8 0.4           0.00742282 MHC excluded
+50          1 0.4           0.00741685 MHC excluded
+51       0.05 0.4           0.00730127 MHC excluded
+52        0.2 0.4           0.00681032 MHC excluded
+53        0.1 0.4           0.00656468 MHC excluded
+54 0.00000005 0.8           0.00566601 MHC excluded
+55        0.4 0.2           0.00543246 MHC excluded
+56        0.6 0.2           0.00532709 MHC excluded
+57        0.8 0.2           0.00518394 MHC excluded
+58          1 0.2           0.00516490 MHC excluded
+59       0.05 0.2           0.00475391 MHC excluded
+60        0.2 0.2           0.00457437 MHC excluded
+61 0.00000005 0.6           0.00454180 MHC excluded
+62        0.1 0.2           0.00417019 MHC excluded
+63 0.00000005 0.4           0.00352574 MHC excluded
+64 0.00000005 0.2           0.00248654 MHC excluded
 ````
 
-3. Validate the PRS in the MRI cohort
+# 3. Validate the PRS in the MRI cohort
 
 ````R
-# Even though there are only 140 MS cases in the MRI cohort, let's just check the PRS is working reasonably well.
+# Even though there are only 164 MS cases in the MRI cohort, let's just check the PRS is working reasonably well.
 
 # choose best prs based on r2 and read it in
 prs = read_table2("/data/Wolfson-UKBB-Dobson/ms_prs/summarised_PRS_results_pval0.4r20.8")
@@ -344,12 +344,14 @@ nohla_prs_model = glm(data=ukb_pheno_mri,
 
 print("printing nagelkerke for best PRS in testing set")
 print(nagelkerke(hlaprs_model,null_model))
+print(nagelkerke(nohla_prs_model,null_model))
+
 ````
 Clearly the PRS works well in discriminating MS cases from controls in the MRI dataset (or as well as can be expected for PRS):
 Parameter  |  PRS (no HLA)   | PRS (with HLA)
 --- | --- | ---
-Nagelkerke's Pseudo-R2 | 0.0161361 |  0.03975300
-Likelihood ratio P value | 2.3576e-07 | 4.8362e-16
+Nagelkerke's Pseudo-R2 | 0.0134 |  0.0394
+Likelihood ratio P value | 2.54e-07 | 9.98e-19
 
 ````R
 library(Hmisc)
@@ -399,8 +401,6 @@ tbl$decile=c(2:10)
 tbl$or=exp(tbl$Estimate)
 tbl$lower_ci=exp(tbl$Estimate-1.96*tbl$Std..Error)
 tbl$upper_ci=exp(tbl$Estimate+1.96*tbl$Std..Error)
-tbl
-write_csv(tbl,"nohla_decile_ORs.csv")
 
 no_hla_prs_decile_plot=ggplot(tbl,aes(decile,or))+
 geom_errorbar(aes(x=decile,ymin=lower_ci,ymax=upper_ci,width=0.2))+
@@ -417,8 +417,11 @@ library(gridExtra)
 png("decile_plot.png",height=8,width=8,res=300,units="in")
 grid.arrange(no_hla_prs_decile_plot,prs_decile_plot,nrow=1)
 dev.off()
+````
+Here is the decile plot:
 
 
+````R
 hist_nohla = ggplot(ukb_pheno_mri,aes(NOHLA_PRS,fill=factor(MS_status)))+
 geom_density(alpha=0.5)+
 scale_fill_brewer(palette ="Set2",labels=c("Controls","MS"))+
@@ -439,7 +442,10 @@ annotate("text",label="MHC Included",x = -Inf, y = Inf, hjust = -0.5, vjust = 1,
 png("prs_hist.png",height=8,width=8,res=300,units="in")
 grid.arrange(hist_nohla,hist_hla,nrow=1)
 dev.off()
+````
+Here is the PRS density plot:
 
+````R
 # roc analysis
 library(ROCR)
 hlaprs_model = glm(data=ukb_pheno_mri,
@@ -496,7 +502,10 @@ calib_plot = ggplot(pred_df,aes(prs_decile,value,col=variable,group=variable))+g
 png("calibration_plot.png",height=8,width=8,res=300,units="in")
 calib_plot
 dev.off()
+````
+Here is the calibration plot:
 
+````R
 # auc
 
 preds = preds %>% na.omit()
@@ -528,8 +537,11 @@ png("discrimination_plot.png",height=8,width=8,res=300,units="in")
 aucplot
 dev.off()
 ````
+Here are the ROC curves:
 
-4. Correlation between PRS and MRI metrics
+
+
+# 4. Correlation between PRS and MRI metrics
 Now let's look at the MRI data itself.
 
 ````R
@@ -555,13 +567,35 @@ any_neuro_disease = source_of_report_data %>% filter(pd_status==1 | ad_status ==
 # filter out neurodegenerative diseases
 ukb_pheno_mri = ukb_pheno_mri %>% filter(!EID %in% any_neuro_disease)
 table(ukb_pheno_mri$MS_status)
+````
+The MRI dataset after excluding people with AD, PD, and strokes:
+Controls     |     Cases
+------------ | --------------
+35991        |  163
 
-#
-mri = ukb_pheno_mri %>% left_join(mri_data,by="EID") %>% filter(!is.na(wm_lesion_vol))
+````R
+# combine MRI and rest of phenotype data
+mri = ukb_pheno_mri %>% left_join(mri_data,by="EID")
 
-# First let's do a sense check and see if pwMS have higher WM lesion volume
+# sense checks
+age_vs_brainvol = ggplot(mri,aes(`Age at recruitment.0.0`,`Volume of brain, grey+white matter (normalised for head size).2.0`))+geom_smooth()+geom_point()
+png("age_brainvol.png",height=8,width=8,res=300,units="in")
+age_vs_brainvol
+dev.off()
+
+age_vs_brainvol_bysex = ggplot(mri,aes(`Age at recruitment.0.0`,`Volume of brain, grey+white matter (normalised for head size).2.0`))+geom_smooth()+geom_point()+facet_wrap(~Sex.0.0)
+png("age_brainvol.png",height=8,width=8,res=300,units="in")
+age_vs_brainvol
+dev.off()
+
+````
+Brain volume is lower in older people:
+- Brain age plots
+
+````R
+# Do pwMS have higher WM lesion volume
 png("wm_lesion_plot_ms_v_control.png",height=8,width=8,res=300,units="in")
-ggplot(mri,aes(factor(MS_status),wm_lesion_vol,fill=factor(MS_status)))+
+ggplot(mri,aes(factor(MS_status),`Total volume of white matter hyperintensities (from T1 and T2_FLAIR images).2.0`,fill=factor(MS_status)))+
 stat_summary(fun=median,geom="crossbar")+
 geom_violin(alpha=0.5)+
 theme_bw()+
@@ -569,6 +603,42 @@ labs(x="MS status",y="Normalised White Matter Lesion Volume",fill="MS status")+
 scale_fill_brewer(palette="Set2",labels=c("Controls","MS"))+
 theme(axis.text.x=element_blank())
 dev.off()
+````
+People with MS have higher T2 hyperintensity volume
+- MS plot
+
+
+````R
+fa_vars = mri %>% select(EID,`Age at recruitment.0.0`,Sex.0.0,MS_status,contains("Mean FA")) %>%
+ select(EID,`Age at recruitment.0.0`,Sex.0.0,MS_status,contains(".2.0")) %>%
+ select(-contains("Weighted"))
+
+
+overall_coefs = data.frame()
+make_model = function(x){
+  fa_vars_no_missing = fa_vars %>% filter(!is.na(fa_vars[[x]]))
+  model = glm(data=fa_vars_no_missing, rankNorm(fa_vars_no_missing[[x]]) ~ `Age at recruitment.0.0`+ `Sex.0.0`+ MS_status)
+  coefs = summary(model)$coefficients[4,]
+  overall_coefs <<- bind_rows(overall_coefs,coefs)
+}
+sapply(colnames(fa_vars)[-c(1:4)],make_model)
+
+overall_coefs = as.tbl(overall_coefs)
+overall_coefs$variable = colnames(fa_vars)[-c(1:4)]
+
+png("ms_vs_control_fa.png",height=8,width=8,res=300,units="in")
+ggplot(overall_coefs,aes(Estimate,variable))+
+geom_point(aes(size=-log10(`Pr(>|t|)`)))+
+geom_errorbarh(aes(y=variable,xmin=Estimate-1.96*`Std. Error`,xmax=Estimate+1.96*`Std. Error`),height=0.1)+
+geom_vline(xintercept=0,alpha=0.5)+
+theme_bw()+
+labs(x="Effect of MS status on normalised FA variable")
+dev.off()
+
+````
+MS is strongly associated with widespread FA changes, consistent with (previous findings in normal-appearing cortex vs non-neurologic controls)[https://academic.oup.com/brain/article/142/7/1921/5511700]
+- MS lesion plot
+
 
 # Let's normalise WM lesion volume before we make any regression models
 mri$norm_wm_lesions = rankNorm(mri$wm_lesion_vol)
