@@ -64,6 +64,7 @@ Controls     |     Cases
 
 
 ````R
+
 # Remove non-European participants
 ukb_pheno = ukb_pheno %>% filter(`Genetic ethnic grouping.0.0` =="Caucasian")
 table(ukb_pheno$MS_status)
@@ -72,8 +73,9 @@ table(ukb_pheno$MS_status)
 After exclusion of non-European participants:
 
 Controls     |     Cases
------------- | --------------
+-----------  | --------------
 407478       |   2102
+
 
 ````R
 # Filter highly related individuals
@@ -92,6 +94,7 @@ table(ukb_pheno$MS_status)
 ````   
 
 After exclusion of non-European participants:
+
 Controls     |     Cases
 ------------ | --------------
 376587       |   2102
@@ -591,6 +594,7 @@ any_neuro_disease = source_of_report_data %>% filter(pd_status==1 | ad_status ==
 ukb_pheno_mri = ukb_pheno_mri %>% filter(!EID %in% any_neuro_disease)
 table(ukb_pheno_mri$MS_status)
 ````
+
 The MRI dataset after excluding people with AD, PD, and cerebral SVD:
 Controls     |     Cases
 ------------ | --------------
