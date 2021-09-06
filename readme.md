@@ -55,17 +55,22 @@ ukb_pheno = ukb_pheno %>% filter(!EID %in% withdrawn$X1)
 
 table(ukb_pheno$MS_status)
 ````
+
 Total number of cases and controls:
+
 Controls     |     Cases
 ------------ | --------------
 485809       |   2405
+
 
 ````R
 # Remove non-European participants
 ukb_pheno = ukb_pheno %>% filter(`Genetic ethnic grouping.0.0` =="Caucasian")
 table(ukb_pheno$MS_status)
 ````
+
 After exclusion of non-European participants:
+
 Controls     |     Cases
 ------------ | --------------
 407478       |   2102
@@ -96,16 +101,20 @@ Controls     |     Cases
 ukb_pheno_nomri = ukb_pheno %>% filter(!EID %in% mri_data$EID)
 table(ukb_pheno_nomri$MS_status)
 ````
+
 In the non-MRI dataset:
+
 Controls     |     Cases
 ------------ | --------------
 340537       |  1938
+
 ````R
 ukb_pheno_mri = ukb_pheno %>% filter(EID %in% mri_data$EID)
 table(ukb_pheno_mri$MS_status)
 ````
-And in the non-MRI dataset:
-In the non-MRI dataset:
+
+And in the MRI dataset:
+
 Controls     |     Cases
 ------------ | --------------
 36050        |  164
@@ -353,6 +362,7 @@ print(nagelkerke(nohla_prs_model,null_model))
 
 ````
 Clearly the PRS works well in discriminating MS cases from controls in the MRI dataset (or as well as can be expected for PRS):
+
 Parameter  |  PRS (no HLA)   | PRS (with HLA)
 --- | --- | ---
 Nagelkerke's Pseudo-R2 | 0.0134 |  0.0394
@@ -454,6 +464,7 @@ Here is the PRS density plot:
 ![density_plot](https://github.com/benjacobs123456/PRS_UKB_MRI/blob/main/prs_hist.png)
 
 Now the calibration plots:
+
 ````R
 # roc analysis
 library(ROCR)
