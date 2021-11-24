@@ -19,7 +19,9 @@ We generated polygenic risk scores in UKB using the IMSGC meta-analysis discover
 #############################################
 #               Load packages
 #############################################
-
+library(gridExtra)
+library(Hmisc)
+library(reshape2)
 library(dplyr)
 library(readr)
 library(ggplot2)
@@ -41,13 +43,36 @@ source_of_report_data = source_of_report_data %>% mutate(MS_status = ifelse(!is.
 
 # read in remainder of phenotype data
 ukb_pheno = read_tsv("../ukb_pheno_911/ukb_pheno_final_MS_1301")
+
+# get drb1*15 dose
+drb15_doses = list()
+for (i in 1:nrow(ukb_pheno)){
+  drb = strsplit(ukb_pheno$`HLA imputation values.0.0`[i][1],split=",")[[1]][282]
+  drb15_doses[[i]] = c(ukb_pheno$EID[i],drb)
+}
+drb15_doses_df = data.frame(do.call("rbind",drb15_doses))
+colnames(drb15_doses_df)=c("EID","DRB1_15")
+
+# impose posterior threshold
+drb15_doses_df = drb15_doses_df %>%
+mutate(DRB1_15 = as.numeric(as.character(DRB1_15))) %>%
+mutate(DRB1_15 = ifelse(DRB1_15<0.7,0,DRB1_15)) %>%
+mutate(DRB1_15 = ifelse(DRB1_15>=0.7 & DRB1_15 <1.4,1,DRB1_15)) %>%
+mutate(DRB1_15 = ifelse(DRB1_15>=1.4,2,DRB1_15))
+
+# calculate 'risk score' for DRB1*15 using OR 3.92 from Moutsianas 2015
+drb_doses_df = drb15_doses_df %>% mutate(DRB_risk_score = DRB1_15*log(3.92))
+drb_doses_df = drb_doses_df %>% mutate(EID=as.numeric(as.character(EID)))
+
+# filter cols
 ukb_pheno = ukb_pheno %>% select(EID,`Age at recruitment.0.0`,Sex.0.0,`Ethnic background.0.0`,contains("rincipal components"),contains("ethnic grouping"))
 
 # combine
 ukb_pheno = ukb_pheno %>% left_join(source_of_report_data,by="EID")
+ukb_pheno = ukb_pheno %>% left_join(drb_doses_df,by="EID")
 
 # read in mri data
-mri_data = read_tsv("mri_data.tsv.gz")
+mri_data = read_tsv("mri.tsv")
 
 # exclude participants who have withdrawn
 withdrawn = read_tsv("../helper_progs_and_key/excluded_indivs",col_names=FALSE)
@@ -101,6 +126,7 @@ Controls     |     Cases
 
 ````R
 # define non-MRI dataset
+mri_data = mri_data %>% filter(`Brain MRI measurement completed.2.0`==1)
 ukb_pheno_nomri = ukb_pheno %>% filter(!EID %in% mri_data$EID)
 table(ukb_pheno_nomri$MS_status)
 ````
@@ -109,7 +135,7 @@ In the non-MRI dataset:
 
 Controls     |     Cases
 ------------ | --------------
-340537       |  1938
+346547       |  1978
 
 ````R
 ukb_pheno_mri = ukb_pheno %>% filter(EID %in% mri_data$EID)
@@ -120,99 +146,107 @@ And in the MRI dataset:
 
 Controls     |     Cases
 ------------ | --------------
-36050        |  164
+30040        |  124
 
 ## 2. Select the best PRS in the UKB non-imaging cohort
 Now we will test the PRS in the non-MRI cohort and select the score with the best explanatory power for MS susceptibility in this cohort.
 ````R
+# collate PRS scores
+pvals = c("1","0.8","0.6","0.4","0.2","0.1","0.05","0.005","0.0005","0.00005","0.000005","0.0000005","0.00000005")
+r2_vector = c(0.1,0.2,0.4,0.6,0.8)
+
+for(r2 in r2_vector){
+  for(pval in pvals){
+    scores = list()
+    for(chr in 1:22){
+      message("P value: ",pval)
+      message("Clumping R2: ",r2)
+      message("Chr: ",chr)
+      file = paste0("/data/scratch/hmy117/chr",chr,"_pval",pval,"_r2_",r2,".sscore")
+      if(file.exists(file)){
+        df = read_table2(file)
+        df = df %>% select(2,6)
+        scores[[chr]] = df
+      }
+    }
+    overall_score = do.call("rbind",scores)
+
+    overall_score = overall_score %>% group_by(IID) %>% summarise(PRS = sum(SCORE1_SUM))
+    colnames(overall_score)=c("EID","PRS")
+    write_tsv(overall_score,paste0("/data/Wolfson-UKBB-Dobson/ms_prs/summarised_PRS_results_pval",pval,"r2",r2))
+    message("Done")
+  }
+}
+
+
 # Define scoring function
-score_prs = function(pval,r2){
-# read in prs
-filename = paste0("/data/Wolfson-UKBB-Dobson/ms_prs/summarised_PRS_results_pval",pval,"r2",r2)
-prs = read_table2(filename)
-colnames(prs) = c("EID","PRS")
-prs_tuning_dataset = ukb_pheno_nomri %>% select(`Age at recruitment.0.0`,`Sex.0.0`,`Genetic principal components.0.1`,`Genetic principal components.0.2`,`Genetic principal components.0.3`,`Genetic principal components.0.4`,MS_status,EID)
-prs_tuning_dataset$EID = as.numeric(as.character(prs_tuning_dataset$EID))
-prs_tuning_dataset = prs_tuning_dataset %>% left_join(prs,by="EID")
-prs_tuning_dataset = prs_tuning_dataset %>% filter(!(is.na(PRS)))
-prs_tuning_dataset$PRS=rankNorm(prs_tuning_dataset$PRS)
+score_prs = function(pval,r2,hla="no",mri="no"){
+  # read in prs
+  filename = paste0("/data/Wolfson-UKBB-Dobson/ms_prs/summarised_PRS_results_pval",pval,"r2",r2)
+  prs = read_table2(filename)
+  colnames(prs) = c("EID","PRS")
 
-null_model = glm(data=prs_tuning_dataset,
-                   MS_status~`Age at recruitment.0.0`+
-                     `Sex.0.0`+
-                     `Genetic principal components.0.1`+
-                     `Genetic principal components.0.2`+
-                     `Genetic principal components.0.3`+
-                     `Genetic principal components.0.4`,
-                   family=binomial(link="logit"))
+  dataset = if(mri=="no"){
+      ukb_pheno_nomri
+    } else if(mri=="yes"){
+      ukb_pheno_mri
+    }
 
-prs_model = glm(data=prs_tuning_dataset,
-                  MS_status~`Age at recruitment.0.0`+
-                    `Sex.0.0`+
-                    `Genetic principal components.0.1`+
-                    `Genetic principal components.0.2`+
-                    `Genetic principal components.0.3`+
-                    `Genetic principal components.0.4`+
-                    PRS,
-                  family=binomial(link="logit"))
-nag = nagelkerke(prs_model,null_model)$Pseudo.R.squared.for.model.vs.null[3]
-return(nag)
+  prs_tuning_dataset = dataset %>% select(`Age at recruitment.0.0`,`Sex.0.0`,`Genetic principal components.0.1`,`Genetic principal components.0.2`,`Genetic principal components.0.3`,`Genetic principal components.0.4`,MS_status,EID,DRB_risk_score)
+  prs_tuning_dataset$EID = as.numeric(as.character(prs_tuning_dataset$EID))
+  prs_tuning_dataset = prs_tuning_dataset %>% left_join(prs,by="EID")
+  prs_tuning_dataset = prs_tuning_dataset %>% filter(!(is.na(PRS)))
+  prs_tuning_dataset = prs_tuning_dataset %>% mutate(combined_score = PRS+DRB_risk_score)
+
+  prs_tuning_dataset$PRS=if(hla=="no"){
+    message("Excluding HLA")
+    rankNorm(prs_tuning_dataset$PRS)
+  } else if(hla=="yes"){
+    message("Including HLA")
+    rankNorm(prs_tuning_dataset$combined_score)
+  }
+
+  null_model = glm(data=prs_tuning_dataset,
+                     MS_status~`Age at recruitment.0.0`+
+                       `Sex.0.0`+
+                       `Genetic principal components.0.1`+
+                       `Genetic principal components.0.2`+
+                       `Genetic principal components.0.3`+
+                       `Genetic principal components.0.4`,
+                     family=binomial(link="logit"))
+
+  prs_model = glm(data=prs_tuning_dataset,
+                    MS_status~`Age at recruitment.0.0`+
+                      `Sex.0.0`+
+                      `Genetic principal components.0.1`+
+                      `Genetic principal components.0.2`+
+                      `Genetic principal components.0.3`+
+                      `Genetic principal components.0.4`+
+                      PRS,
+                    family=binomial(link="logit"))
+  nag = nagelkerke(prs_model,null_model)$Pseudo.R.squared.for.model.vs.null[3]
+  message("Full output:")
+  print(nagelkerke(prs_model,null_model))
+  message("P value: ",pval)
+  message("Clumping R2: ",r2)
+  message("Nagelkerke's Pseudo-R2: ",nag)
+  return(nag)
 }
 
 # Loop scoring function over different PRS
-pvals = c("1","0.8","0.6","0.4","0.2","0.1","0.05","0.00000005")
-r2 = c(0.2,0.4,0.6,0.8)
+pvals = c("1","0.8","0.6","0.4","0.2","0.1","0.05","0.005","0.0005","0.00005","0.000005","0.0000005","0.00000005")
+r2 = c(0.1,0.2,0.4,0.6,0.8)
 params = expand.grid(pvals,r2)
 
-nags = mapply(score_prs,pval=params[,1],r2=params[,2])
+nohla_nags = mapply(score_prs,pval=params[,1],r2=params[,2],hla="no",mri="no")
+hla_nags = mapply(score_prs,pval=params[,1],r2=params[,2],hla="yes",mri="no")
 
 params = data.frame(params)
-params$Nagelkerke_Pseudo_R2 = nags
+params$Nagelkerke_Pseudo_R2 = hla_nags
 colnames(params)=c("Pval","R2","Nagelkerke_Pseudo_R2")
 hla_scores = params
-
-# repeat with hla excluded
-score_prs_nohla = function(pval,r2){
-# read in prs
-filename = paste0("/data/Wolfson-UKBB-Dobson/ms_prs/nomhc_summarised_PRS_results_pval",pval,"r2",r2)
-prs = read_table2(filename)
-colnames(prs) = c("EID","PRS")
-prs_tuning_dataset = ukb_pheno_nomri %>% select(`Age at recruitment.0.0`,`Sex.0.0`,`Genetic principal components.0.1`,`Genetic principal components.0.2`,`Genetic principal components.0.3`,`Genetic principal components.0.4`,MS_status,EID)
-prs_tuning_dataset$EID = as.numeric(as.character(prs_tuning_dataset$EID))
-prs_tuning_dataset = prs_tuning_dataset %>% left_join(prs,by="EID")
-prs_tuning_dataset = prs_tuning_dataset %>% filter(!(is.na(PRS)))
-prs_tuning_dataset$PRS=rankNorm(prs_tuning_dataset$PRS)
-
-null_model = glm(data=prs_tuning_dataset,
-                   MS_status~`Age at recruitment.0.0`+
-                     `Sex.0.0`+
-                     `Genetic principal components.0.1`+
-                     `Genetic principal components.0.2`+
-                     `Genetic principal components.0.3`+
-                     `Genetic principal components.0.4`,
-                   family=binomial(link="logit"))
-
-prs_model = glm(data=prs_tuning_dataset,
-                  MS_status~`Age at recruitment.0.0`+
-                    `Sex.0.0`+
-                    `Genetic principal components.0.1`+
-                    `Genetic principal components.0.2`+
-                    `Genetic principal components.0.3`+
-                    `Genetic principal components.0.4`+
-                    PRS,
-                  family=binomial(link="logit"))
-nag = nagelkerke(prs_model,null_model)$Pseudo.R.squared.for.model.vs.null[3]
-return(nag)
-}
-
-pvals = c("1","0.8","0.6","0.4","0.2","0.1","0.05","0.00000005")
-r2 = c(0.2,0.4,0.6,0.8)
-params = expand.grid(pvals,r2)
-
-nags = mapply(score_prs_nohla,pval=params[,1],r2=params[,2])
-
 params = data.frame(params)
-params$Nagelkerke_Pseudo_R2 = nags
+params$Nagelkerke_Pseudo_R2 = nohla_nags
 colnames(params)=c("Pval","R2","Nagelkerke_Pseudo_R2")
 nohla_scores = params
 
@@ -229,151 +263,64 @@ nagel_plot = ggplot(params,aes(factor(as.numeric(as.character(Pval))),Nagelkerke
   labs(x="P value threshold",y=expression(Nagelkerke~Pseudo-R^{"2"}),fill=expression(Clumping~R^{"2"}~parameter))+
   theme(text=element_text(size=12))
 
-png("nagel_plot.png",height=8,width=12,res=300,units="in")
+png("nagel_plot.png",height=8,width=16,res=300,units="in")
 nagel_plot
 dev.off()
+
+# save results
+write_tsv(training_params,"training_results.tsv")
+write_tsv(ukb_pheno_nomri,"ukb_pheno_nomri.tsv")
+write_tsv(ukb_pheno_mri,"ukb_pheno_mri.tsv")
 ````
 Here's a plot of the prediction pseudo-R2 values for each PRS in the training set (roughly equivalent to variance explained)
 ![Nagel plot](https://github.com/benjacobs123456/PRS_UKB_MRI/blob/main/nagel_plot.png)
 
-The best PRS explain ~ 3.3% (with MHC) and ~1.2% (without MHC) of MS liability in the training (non-MRI) cohort:
-
-````R
-params %>% arrange(desc(Nagelkerke_Pseudo_R2))
-        Pval  R2 Nagelkerke_Pseudo_R2          MHC
-1         0.4 0.8           0.03366990 MHC included
-2         0.6 0.8           0.03334440 MHC included
-3         0.8 0.8           0.03311840 MHC included
-4           1 0.8           0.03309640 MHC included
-5         0.2 0.8           0.03281090 MHC included
-6         0.1 0.8           0.03205260 MHC included
-7        0.05 0.8           0.03139980 MHC included
-8        0.05 0.6           0.03059800 MHC included
-9         0.4 0.6           0.03008720 MHC included
-10        0.1 0.6           0.02993970 MHC included
-11        0.2 0.6           0.02959850 MHC included
-12        0.6 0.6           0.02925860 MHC included
-13        0.8 0.6           0.02882640 MHC included
-14          1 0.6           0.02878650 MHC included
-15       0.05 0.4           0.02680780 MHC included
-16        0.1 0.4           0.02425730 MHC included
-17        0.4 0.4           0.02326720 MHC included
-18        0.2 0.4           0.02295200 MHC included
-19        0.6 0.4           0.02235550 MHC included
-20        0.8 0.4           0.02183290 MHC included
-21          1 0.4           0.02181220 MHC included
-22 0.00000005 0.8           0.02165780 MHC included
-23 0.00000005 0.6           0.02134920 MHC included
-24 0.00000005 0.4           0.02068890 MHC included
-25 0.00000005 0.2           0.01867150 MHC included
-26       0.05 0.2           0.01638110 MHC included
-27        0.1 0.2           0.01358170 MHC included
-28        0.4 0.2           0.01312180 MHC included
-29        0.2 0.2           0.01280330 MHC included
-30        0.6 0.2           0.01268200 MHC included
-31       0.05 0.8           0.01245110 MHC excluded
-32        0.8 0.2           0.01240420 MHC included
-33          1 0.2           0.01237700 MHC included
-34        0.4 0.8           0.01215340 MHC excluded
-35        0.1 0.8           0.01169500 MHC excluded
-36        0.6 0.8           0.01168870 MHC excluded
-37        0.2 0.8           0.01161880 MHC excluded
-38        0.8 0.8           0.01144460 MHC excluded
-39          1 0.8           0.01142960 MHC excluded
-40        0.4 0.6           0.01015730 MHC excluded
-41        0.6 0.6           0.00973436 MHC excluded
-42       0.05 0.6           0.00964942 MHC excluded
-43        0.8 0.6           0.00949456 MHC excluded
-44          1 0.6           0.00947578 MHC excluded
-45        0.2 0.6           0.00905918 MHC excluded
-46        0.1 0.6           0.00890722 MHC excluded
-47        0.4 0.4           0.00797541 MHC excluded
-48        0.6 0.4           0.00767666 MHC excluded
-49        0.8 0.4           0.00742282 MHC excluded
-50          1 0.4           0.00741685 MHC excluded
-51       0.05 0.4           0.00730127 MHC excluded
-52        0.2 0.4           0.00681032 MHC excluded
-53        0.1 0.4           0.00656468 MHC excluded
-54 0.00000005 0.8           0.00566601 MHC excluded
-55        0.4 0.2           0.00543246 MHC excluded
-56        0.6 0.2           0.00532709 MHC excluded
-57        0.8 0.2           0.00518394 MHC excluded
-58          1 0.2           0.00516490 MHC excluded
-59       0.05 0.2           0.00475391 MHC excluded
-60        0.2 0.2           0.00457437 MHC excluded
-61 0.00000005 0.6           0.00454180 MHC excluded
-62        0.1 0.2           0.00417019 MHC excluded
-63 0.00000005 0.4           0.00352574 MHC excluded
-64 0.00000005 0.2           0.00248654 MHC excluded
-````
+The best PRS explain ~ 1.3% (with MHC) and ~1.2% (without MHC) of MS liability in the training (non-MRI) cohort:
 
 ## 3. Validate the PRS in the MRI cohort
 This step checks that these optimal PRS actually have some predictive/discriminative power to distinguish MS from controls in the MRI dataset. These results are a rough check as there are only 164 MS cases in the MRI cohort.
 
 
 ````R
-# Even though there are only 164 MS cases in the MRI cohort, let's just check the PRS is working reasonably well.
+# Even though there are only 124 MS cases in the MRI cohort, let's just check the PRS is working reasonably well.
 
-# choose best prs based on r2 and read it in
-prs = read_table2("/data/Wolfson-UKBB-Dobson/ms_prs/summarised_PRS_results_pval0.4r20.8")
-colnames(prs)=c("EID","PRS")
-nohla_prs = read_table2("/data/Wolfson-UKBB-Dobson/ms_prs/nomhc_summarised_PRS_results_pval0.05r20.8")
-colnames(nohla_prs)=c("EID","PRS")
+# read in results
+ukb_pheno_nomri = read_tsv("ukb_pheno_nomri.tsv")
+ukb_pheno_mri = read_tsv("ukb_pheno_mri.tsv")
 
-ukb_pheno_mri = ukb_pheno_mri %>% select(-contains("PRS"))
-ukb_pheno_mri = ukb_pheno_mri %>% left_join(prs,by="EID")
-ukb_pheno_mri = ukb_pheno_mri %>% filter(!(is.na(PRS)))
-ukb_pheno_mri$HLA_PRS=rankNorm(ukb_pheno_mri$PRS)
-ukb_pheno_mri = ukb_pheno_mri %>% select(-PRS)
-ukb_pheno_mri = ukb_pheno_mri %>% left_join(nohla_prs,by="EID")
-ukb_pheno_mri = ukb_pheno_mri %>% filter(!(is.na(PRS)))
-ukb_pheno_mri$NOHLA_PRS=rankNorm(ukb_pheno_mri$PRS)
+print("printing nagelkerke for best non-HLA PRS in testing set")
+score_prs(pval="0.05",r2=0.8,hla="no",mri="yes")
+print("printing nagelkerke for best HLA PRS in testing set")
+score_prs(pval="0.0005",r2=0.8,hla="yes",mri="yes")
 
-# nagelkerke
-null_model = glm(data=ukb_pheno_mri,
-               MS_status~`Age at recruitment.0.0`+
-                 `Sex.0.0`+
-                 `Genetic principal components.0.1`+
-                 `Genetic principal components.0.2`+
-                 `Genetic principal components.0.3`+
-                 `Genetic principal components.0.4`,
-               family=binomial(link="logit"))
-
-hlaprs_model = glm(data=ukb_pheno_mri,
-              MS_status~`Age at recruitment.0.0`+
-                `Sex.0.0`+
-                `Genetic principal components.0.1`+
-                `Genetic principal components.0.2`+
-                `Genetic principal components.0.3`+
-                `Genetic principal components.0.4`+
-                HLA_PRS,
-              family=binomial(link="logit"))
-
-nohla_prs_model = glm(data=ukb_pheno_mri,
-              MS_status~`Age at recruitment.0.0`+
-                `Sex.0.0`+
-                `Genetic principal components.0.1`+
-                `Genetic principal components.0.2`+
-                `Genetic principal components.0.3`+
-                `Genetic principal components.0.4`+
-                NOHLA_PRS,
-              family=binomial(link="logit"))
-
-print("printing nagelkerke for best PRS in testing set")
-print(nagelkerke(hlaprs_model,null_model))
-print(nagelkerke(nohla_prs_model,null_model))
 
 ````
 Clearly the PRS works well in discriminating MS cases from controls in the MRI dataset (or as well as can be expected for PRS):
 
 Parameter  |  PRS (no HLA)   | PRS (with HLA)
 --- | --- | ---
-Nagelkerke's Pseudo-R2 | 0.0134 |  0.0394
-Likelihood ratio P value | 2.54e-07 | 9.98e-19
+Nagelkerke's Pseudo-R2 | 0.0134 |  0.015
+Likelihood ratio P value | 5.70e-06 | 1.43e-06
 
 Now we'll check that with increasing PRS deciles, MS risk increases as we would expect.
 ````R
-library(Hmisc)
+# read in best PRS
+
+hla_prs = read_table2("/data/Wolfson-UKBB-Dobson/ms_prs/summarised_PRS_results_pval0.0005r20.8")
+prs = read_table2("/data/Wolfson-UKBB-Dobson/ms_prs/summarised_PRS_results_pval0.05r20.8")
+
+# HLA PRS
+ukb_pheno_mri$EID = as.numeric(as.character(ukb_pheno_mri$EID))
+ukb_pheno_mri = ukb_pheno_mri %>% left_join(hla_prs,by="EID")
+ukb_pheno_mri = ukb_pheno_mri %>% filter(!(is.na(PRS)))
+ukb_pheno_mri = ukb_pheno_mri %>% mutate(combined_score = PRS+DRB_risk_score)
+ukb_pheno_mri = ukb_pheno_mri %>% mutate(HLA_PRS = rankNorm(ukb_pheno_mri$combined_score)) %>% select(-PRS)
+
+# add in non-HLA
+ukb_pheno_mri = ukb_pheno_mri %>% left_join(prs,by="EID")
+ukb_pheno_mri = ukb_pheno_mri %>% filter(!(is.na(PRS)))
+ukb_pheno_mri = ukb_pheno_mri %>% mutate(NOHLA_PRS = rankNorm(ukb_pheno_mri$PRS))
+
 
 # decile plot
 ukb_pheno_mri$prs_decile = cut2(ukb_pheno_mri$HLA_PRS,g=10)
@@ -401,7 +348,7 @@ theme_classic()+
 theme(legend.position="none",text=element_text(size=12))+
 labs(x="PRS Decile",y="OR for MS (vs lowest decile)")+
 annotate("text",label="MHC Included",x = -Inf, y = Inf, hjust = -0.5, vjust = 1,size=8)+
-ylim(c(0,25))
+ylim(c(0,10))
 
 
 ukb_pheno_mri$prs_decile = cut2(ukb_pheno_mri$NOHLA_PRS,g=10)
@@ -428,10 +375,9 @@ theme_classic()+
 theme(legend.position="none",text=element_text(size=12))+
 labs(x="PRS Decile",y="OR for MS (vs lowest decile)")+
 annotate("text",label="MHC Excluded",x = -Inf, y = Inf, hjust = -0.5, vjust = 1,size=8)+
-ylim(c(0,25))
+ylim(c(0,10))
 
 
-library(gridExtra)
 
 png("decile_plot.png",height=8,width=8,res=300,units="in")
 grid.arrange(no_hla_prs_decile_plot,prs_decile_plot,nrow=1)
@@ -598,7 +544,7 @@ table(ukb_pheno_mri$MS_status)
 The MRI dataset after excluding people with AD, PD, and cerebral SVD:
 Controls     |     Cases
 ------------ | --------------
-35991        |  163
+29988        |  124
 
 
 Now we'll do some basic sense checks.
@@ -698,39 +644,95 @@ There is no statistical evidence of such an association either:
 ````R
 # Does MS PRS predict WM lesion volume in healthy people
 hla_model = glm(data=mri_noms,norm_wm_lesions~`Age at recruitment.0.0`+Sex.0.0+`Genetic principal components.0.1`+`Genetic principal components.0.2`+`Genetic principal components.0.3`+`Genetic principal components.0.4`+`Volume of brain, grey+white matter (normalised for head size).2.0`+`Volume of ventricular cerebrospinal fluid (normalised for head size).2.0` +HLA_PRS)
-summary(hla_model)$coefficients[10,]
-summary(hla_model)$coefficients[10,]
-    Estimate   Std. Error      t value     Pr(>|t|)
--0.005647618  0.004715386 -1.197700098  0.231042586
+summary(hla_model)$coefficients["HLA_PRS",]
+Estimate   Std. Error      t value     Pr(>|t|)
+-0.004833947  0.005107555 -0.946430771  0.343937218
 
 nohla_model = glm(data=mri_noms,norm_wm_lesions~`Age at recruitment.0.0`+Sex.0.0+`Genetic principal components.0.1`+`Genetic principal components.0.2`+`Genetic principal components.0.3`+`Genetic principal components.0.4`+`Volume of brain, grey+white matter (normalised for head size).2.0`+`Volume of ventricular cerebrospinal fluid (normalised for head size).2.0` +NOHLA_PRS)
-summary(nohla_model)$coefficients[10,]
+summary(nohla_model)$coefficients["NOHLA_PRS",]
 
-   Estimate  Std. Error     t value    Pr(>|t|)
-0.004583730 0.004707508 0.973706143 0.330209763
+Estimate  Std. Error     t value    Pr(>|t|)
+0.003524292 0.005110308 0.689643836 0.490424002
 ````
 
-So there is no association between either PRS and WM hyperintensities.
+As a sensitivity analysis, let's repeat this analysis over a range of PRS parameters:
+````R
+pvals = c("1","0.8","0.6","0.4","0.2","0.1","0.05","0.005","0.0005","0.00005","0.000005","0.0000005","0.00000005")
+r2_vector = c(0.1,0.2,0.4,0.6,0.8)
+pval_summary = list()
+for(hla in c("yes","no")){
+  for(pval in pvals){
+    for(r2 in r2_vector){
+      message("calculating WM association with PRS")
+      message("R2 = ",r2)
+      message("P = ",pval)
+      prs = read_table2(paste0("/data/Wolfson-UKBB-Dobson/ms_prs/summarised_PRS_results_pval",pval,"r2",r2))
+      colnames(prs)=c("EID","PRS")
+      mri_noms = mri_noms %>% select(-contains("PRS"))
+      mri_noms = mri_noms %>% left_join(prs,by="EID")
+      mri_noms = mri_noms %>% filter(!(is.na(PRS)))
+      mri_noms = mri_noms %>% mutate(combined_score = PRS+DRB_risk_score)
+
+      mri_noms$PRS=if(hla=="no"){
+        message("Excluding HLA")
+        rankNorm(mri_noms$PRS)
+      } else if(hla=="yes"){
+        message("Including HLA")
+        rankNorm(mri_noms$combined_score)
+      }
+
+
+      # make model
+      prs_model = glm(data=mri_noms,norm_wm_lesions~`Age at recruitment.0.0`+Sex.0.0+`Genetic principal components.0.1`+`Genetic principal components.0.2`+`Genetic principal components.0.3`+`Genetic principal components.0.4`+`Volume of brain, grey+white matter (normalised for head size).2.0`+`Volume of ventricular cerebrospinal fluid (normalised for head size).2.0` + PRS)
+      pval_res = summary(prs_model)$coefficients["PRS","Pr(>|t|)"]
+      beta_res = summary(prs_model)$coefficients["PRS","Estimate"]
+      se_res = summary(prs_model)$coefficients["PRS","Std. Error"]
+      pval_summary[[length(pval_summary)+1]] = c(as.numeric(pval),as.numeric(r2),as.numeric(pval_res),as.numeric(beta_res),as.numeric(se_res))
+      message("P value for this model is ",pval_res)
+    }
+  }
+}
+
+res_df = data.frame(do.call("rbind",pval_summary))
+colnames(res_df) = c("PRS_P","PRS_R2","P_val","Beta","SE")
+res_df$hla = c(rep("HLA",nrow(res_df)/2),rep("NO HLA",nrow(res_df)/2))
+res_df$fdr = p.adjust(res_df$P_val,method="fdr")
+res_df$sig = ifelse(res_df$fdr<0.1,"*","NS")
+
+png("sensitivity_wm_prs_plot.png",res=300,units="in",height=8,width=16)
+ggplot(res_df,aes(factor(PRS_P),factor(PRS_R2),label=round(P_val,2),fill=-log10(P_val)))+
+geom_tile()+
+scale_fill_viridis_c()+
+geom_text()+
+theme_bw()+
+facet_wrap(~hla)+
+labs(x="PRS P value threshold",y="PRS clumping R2 threshold")
+dev.off()
+````
+None of these associations surpass an FDR threshold of 10%.
+![PRS WM lesion plot](https://github.com/benjacobs123456/PRS_UKB_MRI/blob/main/sensitivity_wm_prs_plot.png)
+So there is no association between the MS-PRS and WM hyperintensities in healthy (non-MS) UKB controls.
 
 What about regional mean Fractional Anisotropy?
 ````R
 
-fa_vars = mri_noms %>% select(EID,`Age at recruitment.0.0`,Sex.0.0,MS_status,contains("Mean FA"),HLA_PRS,NOHLA_PRS,`Genetic principal components.0.1`,`Genetic principal components.0.2`,`Genetic principal components.0.3`,`Genetic principal components.0.4`) %>%
- select(EID,`Age at recruitment.0.0`,Sex.0.0,MS_status,HLA_PRS,NOHLA_PRS,`Genetic principal components.0.1`,`Genetic principal components.0.2`,`Genetic principal components.0.3`,`Genetic principal components.0.4`,contains(".2.0")) %>%
+fa_vars = mri_noms %>% select(EID,`Age at recruitment.0.0`,Sex.0.0,MS_status,HLA_PRS,NOHLA_PRS,DRB_risk_score,`Genetic principal components.0.1`,`Genetic principal components.0.2`,`Genetic principal components.0.3`,`Genetic principal components.0.4`,contains("Mean FA")) %>%
+ select(EID,`Age at recruitment.0.0`,Sex.0.0,MS_status,,HLA_PRS,NOHLA_PRS,DRB_risk_score,`Genetic principal components.0.1`,`Genetic principal components.0.2`,`Genetic principal components.0.3`,`Genetic principal components.0.4`,contains(".2.0")) %>%
  select(-contains("Weighted"))
+
 
 # HLA PRS
 overall_coefs = data.frame()
 make_model = function(x){
   fa_vars_no_missing = fa_vars %>% filter(!is.na(fa_vars[[x]]))
   model = glm(data=fa_vars_no_missing, rankNorm(fa_vars_no_missing[[x]]) ~ `Age at recruitment.0.0`+ `Sex.0.0`+ `Genetic principal components.0.1`+`Genetic principal components.0.2`+`Genetic principal components.0.3`+`Genetic principal components.0.4`+ HLA_PRS)
-  coefs = summary(model)$coefficients[8,]
+  coefs = summary(model)$coefficients["HLA_PRS",]
   overall_coefs <<- bind_rows(overall_coefs,coefs)
 }
-sapply(colnames(fa_vars)[-c(1:10)],make_model)
+sapply(colnames(fa_vars)[-c(1:11)],make_model)
 
 overall_coefs = as.tbl(overall_coefs)
-overall_coefs$variable = colnames(fa_vars)[-c(1:10)]
+overall_coefs$variable = colnames(fa_vars)[-c(1:11)]
 
 hla_fa_plot = ggplot(overall_coefs,aes(Estimate,variable))+
 geom_point(aes(size=-log10(`Pr(>|t|)`)))+
@@ -738,19 +740,20 @@ geom_errorbarh(aes(y=variable,xmin=Estimate-1.96*`Std. Error`,xmax=Estimate+1.96
 geom_vline(xintercept=0,alpha=0.5)+
 theme_bw()+
 labs(x="Effect of HLA PRS on normalised FA variable")
+hla_coefs = overall_coefs
 
 # NOHLA PRS
 overall_coefs = data.frame()
 make_model = function(x){
   fa_vars_no_missing = fa_vars %>% filter(!is.na(fa_vars[[x]]))
   model = glm(data=fa_vars_no_missing, rankNorm(fa_vars_no_missing[[x]]) ~ `Age at recruitment.0.0`+ `Sex.0.0`+ `Genetic principal components.0.1`+`Genetic principal components.0.2`+`Genetic principal components.0.3`+`Genetic principal components.0.4`+ NOHLA_PRS)
-  coefs = summary(model)$coefficients[8,]
+  coefs = summary(model)$coefficients["NOHLA_PRS",]
   overall_coefs <<- bind_rows(overall_coefs,coefs)
 }
-sapply(colnames(fa_vars)[-c(1:10)],make_model)
+sapply(colnames(fa_vars)[-c(1:11)],make_model)
 
 overall_coefs = as.tbl(overall_coefs)
-overall_coefs$variable = colnames(fa_vars)[-c(1:10)]
+overall_coefs$variable = colnames(fa_vars)[-c(1:11)]
 
 nonhla_fa_plot = ggplot(overall_coefs,aes(Estimate,variable))+
 geom_point(aes(size=-log10(`Pr(>|t|)`)))+
@@ -758,10 +761,15 @@ geom_errorbarh(aes(y=variable,xmin=Estimate-1.96*`Std. Error`,xmax=Estimate+1.96
 geom_vline(xintercept=0,alpha=0.5)+
 theme_bw()+
 labs(x="Effect of Non-HLA PRS on normalised FA variable")
+nohla_coefs = overall_coefs
 
 png("fa_prs_plot.png",res=300,units="in",height=8,width=16)
 grid.arrange(hla_fa_plot,nonhla_fa_plot,nrow=1)
 dev.off()
+
+overall_coefs = bind_rows(nohla_coefs,hla_coefs)
+overall_coefs$fdr = p.adjust(overall_coefs$`Pr(>|t|)`)
+
 ````
 The answer is no. None of these associations pass the multiple testing threshold (Alpha = 0.05, Bonferroni correction).
 ![fa_plot](https://github.com/benjacobs123456/PRS_UKB_MRI/blob/main/fa_prs_plot.png)
